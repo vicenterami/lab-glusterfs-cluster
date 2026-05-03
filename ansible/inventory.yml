@@ -1,0 +1,18 @@
+all:
+  hosts:
+    nodo1:
+      ansible_host: 192.168.122.101
+      ansible_user: amellado
+    nodo2:
+      ansible_host: 192.168.122.102
+      ansible_user: amellado
+    nodo3:
+      ansible_host: 192.168.122.103
+      ansible_user: amellado
+  children:
+    servers:
+      hosts:
+        nodo1:
+        nodo2:
+        nodo3:
+
