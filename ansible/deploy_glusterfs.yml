@@ -1,0 +1,73 @@
+---
+- name: 1. Instalar y preparar GlusterFS en TODOS los nodos
+  hosts: all
+  become: yes
+  tasks:
+    - name: Instalar GlusterFS server
+      apt:
+        name: glusterfs-server
+        state: present
+        update_cache: yes
+
+    - name: Asegurar que el servicio GlusterFS este activo
+      systemd:
+        name: glusterd
+        state: started
+        enabled: yes
+
+    - name: Crear directorio fisico para los datos (El "Brick")
+      file:
+        path: /gluster/brick
+        state: directory
+        mode: '0775'
+
+    - name: Crear directorio para acceder al volumen (Punto de montaje)
+      file:
+        path: /mnt/vol_compartido
+        state: directory
+        mode: '0775'
+
+- name: 2. Crear cluster y volumen replicado (Solo desde el NODO 1)
+  hosts: nodo1
+  become: yes
+  tasks:
+    - name: Conectar Nodo 2 al cluster (Peer Probe)
+      command: gluster peer probe 192.168.122.102
+      register: peer2
+      failed_when: "'success' not in peer2.stdout and 'already in peer list' not in peer2.stdout"
+
+    - name: Conectar Nodo 3 al cluster (Peer Probe)
+      command: gluster peer probe 192.168.122.103
+      register: peer3
+      failed_when: "'success' not in peer3.stdout and 'already in peer list' not in peer3.stdout"
+
+    - name: Esperar 5 segundos para que los nodos se reconozcan
+      pause:
+        seconds: 5
+
+    - name: Crear el Volumen Replicado (Replica 3)
+      command: >
+        gluster volume create vol_replica replica 3 transport tcp
+        192.168.122.101:/gluster/brick
+        192.168.122.102:/gluster/brick
+        192.168.122.103:/gluster/brick
+        force
+      register: vol_create
+      failed_when: "'success' not in vol_create.stdout and 'already exists' not in vol_create.stderr and 'already exists' not in vol_create.stdout"
+
+    - name: Iniciar el volumen
+      command: gluster volume start vol_replica
+      register: vol_start
+      failed_when: "'success' not in vol_start.stdout and 'already started' not in vol_start.stderr and 'already started' not in vol_start.stdout"
+
+- name: 3. Montar el volumen en TODOS los nodos
+  hosts: all
+  become: yes
+  tasks:
+    - name: Montar el volumen GlusterFS en /mnt/vol_compartido
+      mount:
+        path: /mnt/vol_compartido
+        src: localhost:/vol_replica
+        fstype: glusterfs
+        opts: defaults,_netdev
+        state: mounted

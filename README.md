@@ -1,10 +1,10 @@
-# Ceph Lab — Clúster Distribuido en KVM
+# GlusterFS Lab — Clúster Distribuido en KVM
 
-Laboratorio para desplegar un clúster Ceph de 3 nodos sobre máquinas virtuales KVM usando Terraform y Ansible.
+Laboratorio para desplegar un clúster GlusterFS de 3 nodos sobre máquinas virtuales KVM usando Terraform y Ansible.
 
 ## Arquitectura
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                     Host (libvirt/KVM)                      │
 │                                                             │
@@ -12,21 +12,24 @@ Laboratorio para desplegar un clúster Ceph de 3 nodos sobre máquinas virtuales
 │  │   nodo1     │  │   nodo2     │  │   nodo3     │          │
 │  │ .101        │  │ .102        │  │ .103        │          │
 │  │             │  │             │  │             │          │
-│  │ MON / MGR   │  │  OSD x2     │  │  OSD x2     │          │
-│  │ OSD x2      │  │             │  │             │          │
-│  │ Dashboard   │  │             │  │             │          │
+│  │ GlusterFS   │  │ GlusterFS   │  │ GlusterFS   │          │
+│  │ Brick 1     │  │ Brick 1     │  │ Brick 1     │          │
 │  └─────────────┘  └─────────────┘  └─────────────┘          │
 │         192.168.122.0/24                                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-| Nodo  | IP              | Roles              |
-|-------|-----------------|--------------------|
-| nodo1 | 192.168.122.101 | MON, MGR, OSD, Dashboard |
-| nodo2 | 192.168.122.102 | OSD                |
-| nodo3 | 192.168.122.103 | OSD                |
 
-**Total OSDs:** 6 (2 discos × 3 nodos — `/dev/vdb` y `/dev/vdc`)
+
+| Nodo	| IP	            | Rol en el Clúster	| Punto de Montaje    |
+|-------|-------------------|-------------------|---------------------|
+| nodo1	| 192.168.122.101	| Peer / Brick	    | /mnt/vol_compartido |
+| nodo2	| 192.168.122.102	| Peer / Brick	    | /mnt/vol_compartido |
+| nodo3	| 192.168.122.103	| Peer / Brick	    | /mnt/vol_compartido |
+
+
+
+
 
 ## Requisitos
 
@@ -39,24 +42,14 @@ Laboratorio para desplegar un clúster Ceph de 3 nodos sobre máquinas virtuales
 ## Estructura del repositorio
 
 ```
-ceph-lab/
+glusterfs-lab/
 ├── terraform/nodos/
 │   ├── main.tf               # Definición de VMs, discos y redes
-│   ├── variables.tf          # Parámetros configurables (RAM, CPU, discos)
-│   ├── provider.tf           # Proveedor libvirt
-│   ├── terraform.tf          # Versión de providers
-│   ├── limpia.sh             # Script de destrucción y limpieza
-│   └── config/
-│       ├── cloud_init.cfg    # Cloud-init: usuario, paquetes, locale
-│       ├── network_config1.cfg  # Netplan nodo1 (192.168.122.101)
-│       ├── network_config2.cfg  # Netplan nodo2 (192.168.122.102)
-│       └── network_config3.cfg  # Netplan nodo3 (192.168.122.103)
+│   ├── variables.tf          # Parámetros configurables
+│   └── ...                   
 ├── ansible/
 │   ├── inventory.yml         # Inventario de hosts
-│   ├── config_hosts.yml      # Configura /etc/hosts en los nodos
-│   ├── config_keys.yml       # Distribución de claves SSH entre nodos
-│   ├── deploy_ceph.yml       # Despliegue principal del clúster Ceph
-│   └── ceph-dashboard-password.yml  # Configura contraseña del dashboard
+│   └── deploy_glusterfs.yml  # Playbook de instalación y configuración de GlusterFS
 └── reset_ssh_finger.sh       # Limpia y restablece fingerprints SSH
 ```
 
@@ -67,91 +60,82 @@ ceph-lab/
 ```bash
 cd terraform/nodos
 terraform init
-terraform apply
+terraform apply -auto-approve
 ```
 
 Esto crea 3 VMs con:
 - 8 GB RAM, 1 vCPU
 - Disco OS de 20 GB (`/dev/vda`)
-- 2 discos adicionales de 30 GB cada uno (`/dev/vdb`, `/dev/vdc`)
 
 ### 2. Limpiar fingerprints SSH
 
 Necesario después de crear (o recrear) las VMs:
 
 ```bash
+cd ../..
 ./reset_ssh_finger.sh
 ```
 
-### 3. Configurar los nodos
+### 3. Instalar y Configurar GlusterFS
+
+Este playbook instalará el servidor de GlusterFS, creará los bricks físicos, conectará los nodos, generará el volumen replicado y lo montará automáticamente.
 
 ```bash
 cd ansible
-
-# Configurar /etc/hosts en todos los nodos
-ansible-playbook -i inventory.yml config_hosts.yml
-
-# Distribuir claves SSH entre nodos (necesario para cephadm)
-ansible-playbook -i inventory.yml config_keys.yml
+ansible-playbook -i inventory.yml deploy_glusterfs.yml
 ```
 
-### 4. Desplegar Ceph
 
+# ==========================================
+# 1. PRUEBA DE ESCRITURA Y LECTURA (BÁSICA)
+# ==========================================
+
+# Escribir un archivo desde el NODO 1
 ```bash
-ansible-playbook -i inventory.yml deploy_ceph.yml
+ssh vicenterog@192.168.122.101 'echo "Prueba de escritura: El volumen GlusterFS funciona" | sudo tee /mnt/vol_compartido/prueba.txt'
 ```
 
-Este playbook:
-1. Instala dependencias (`lvm2`, `docker`, `chrony`, etc.)
-2. Descarga e instala `cephadm` (release Reef)
-3. Hace bootstrap del clúster en `nodo1`
-4. Agrega `nodo2` y `nodo3` al orquestador
-5. Crea los OSDs a partir de los discos extra
-
-### 5. Configurar el Dashboard
-
+# Leer el archivo desde el NODO 2
 ```bash
-ansible-playbook -i inventory.yml ceph-dashboard-password.yml
+ssh vicenterog@192.168.122.102 'cat /mnt/vol_compartido/prueba.txt'
 ```
 
-Al finalizar muestra la URL del dashboard y las credenciales generadas.
-
-## Configuración (variables Terraform)
-
-Editar `terraform/nodos/variables.tf` para ajustar recursos:
-
-| Variable      | Default | Descripción               |
-|---------------|---------|---------------------------|
-| `ram`         | 8192    | RAM por nodo (MB)         |
-| `vcpu`        | 1       | vCPUs por nodo            |
-| `disk_size`   | 20 GB   | Tamaño disco OS           |
-| `osd_size`    | 30 GB   | Tamaño discos OSD         |
-
-## Acceso
-
+# Leer el archivo desde el NODO 3
 ```bash
-# SSH a cualquier nodo
-ssh amellado@192.168.122.101   # usuario: amellado / pass: linux
-
-# Dashboard Ceph (desde nodo1)
-https://192.168.122.101:8443
+ssh vicenterog@192.168.122.103 'cat /mnt/vol_compartido/prueba.txt'
 ```
 
-## Destruir el laboratorio
+# ==========================================
+# 2. PRUEBA DE ALTA DISPONIBILIDAD (CAÍDA DE NODO)
+# ==========================================
 
+# Apagar el NODO 3 para simular una caída
 ```bash
-cd terraform/nodos
-./limpia.sh
+ssh vicenterog@192.168.122.103 'sudo poweroff'
 ```
 
-El script ejecuta `terraform destroy` y limpia archivos de estado residuales.
+# Escribir un nuevo archivo desde el NODO 1 (demostrando que el clúster sigue vivo)
+```bash
+ssh vicenterog@192.168.122.101 'echo "Archivo creado mientras el Nodo 3 estaba apagado." | sudo tee /mnt/vol_compartido/supervivencia.txt'
+```
 
-## Versiones
+# Leer el archivo desde el NODO 2
+```bash
+ssh vicenterog@192.168.122.102 'cat /mnt/vol_compartido/supervivencia.txt'
+```
 
-| Componente | Versión          |
-|------------|-----------------|
-| Ceph       | Reef (18.x)     |
-| Ubuntu     | 22.04 (Jammy)   |
-| Terraform  | >= 1.0          |
-| libvirt    | dmacvicar/libvirt v0.8.2 |
-| cephadm    | Método de despliegue (contenedores) |
+# ==========================================
+# 3. PRUEBA DE AUTO-HEALING (RECUPERACIÓN)
+# ==========================================
+
+# Encender el NODO 3 nuevamente desde tu máquina local
+```bash
+virsh start nodo3
+```
+
+# (Esperar unos 20-30 segundos para que inicie Linux y GlusterFS se sincronice)
+
+# Verificar que el Nodo 3 recuperó automáticamente el archivo que se perdió
+```bash
+ssh vicenterog@192.168.122.103 'cat /mnt/vol_compartido/supervivencia.txt'
+```
