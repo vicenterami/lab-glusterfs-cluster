@@ -30,7 +30,7 @@ variable "diskSize" {
 }
 
 variable "path_to_image" {
-  default = "/home/amellado/vmstore/images"
+  default = "/home/vicenterog/vmstore"
 }
 
 variable "network_configs" {
